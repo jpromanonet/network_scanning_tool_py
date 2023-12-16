@@ -2,28 +2,52 @@ import socket
 import threading
 import queue
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import ttk, scrolledtext
+import sys
 
-def scan_ports(target, start_port, end_port, results, loading_var):
-    for port in range(start_port, end_port + 1):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        result = sock.connect_ex((target, port))
-        if result == 0:
-            service_name = socket.getservbyport(port)
-            results.put((port, service_name))
-        sock.close()
-    loading_var.set(False)  # Set loading variable to False when scanning is complete
+# Let's hide a tkinter error I couldn't solve.
+sys.stderr = open('NUL', 'w')
 
-def worker_thread(target, port_range, results, loading_var):
-    loading_var.set(True)  # Set loading variable to True when scanning starts
+def scan_ports(target, start_port, end_port, results, loading_var, status_label, progress_text):
+    try:
+        for port in range(start_port, end_port + 1):
+            if loading_var.get():
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)  # Set a timeout of 1 second
+                try:
+                    result = sock.connect_ex((target, port))
+                    if result == 0:
+                        service_name = socket.getservbyport(port)
+                        results.put((port, service_name))
+                        update_ui(progress_text, f"Port {port} open - Service: {service_name}\n")
+                    else:
+                        update_ui(progress_text, f"Port {port} closed\n")
+                except socket.error:
+                    update_ui(progress_text, f"Port {port} error\n")
+                finally:
+                    sock.close()
+            else:
+                break  # Stop scanning if the "Stop Scan" button is pressed
+
+        loading_var.set(False)
+        status_label.config(text="Scan Complete", foreground="green")
+    except Exception as e:
+        pass
+
+def update_ui(widget, message):
+    widget.config(state=tk.NORMAL)
+    widget.insert(tk.END, message)
+    widget.config(state=tk.DISABLED)
+    widget.yview(tk.END)  # Scroll to the end
+
+def worker_thread(target, port_ranges, results, loading_var, status_label, progress_text):
     while True:
-        start_port, end_port = port_range.get()
-        if start_port is None:
+        start_port, end_port = port_ranges.get()
+        if start_port is None or not loading_var.get():
             break
-        scan_ports(target, start_port, end_port, results, loading_var)
+        scan_ports(target, start_port, end_port, results, loading_var, status_label, progress_text)
 
-def start_threads(target, num_threads, results, loading_var):
+def start_threads(target, num_threads, results, loading_var, status_label, progress_text):
     port_ranges = queue.Queue()
     total_ports = 65535
 
@@ -37,10 +61,11 @@ def start_threads(target, num_threads, results, loading_var):
 
     threads = []
     for _ in range(num_threads):
-        thread = threading.Thread(target=worker_thread, args=(target, port_ranges, results, loading_var))
+        thread = threading.Thread(target=worker_thread, args=(target, port_ranges, results, loading_var, status_label, progress_text))
         thread.start()
         threads.append(thread)
 
+    # Wait for all threads to finish
     for thread in threads:
         thread.join()
 
@@ -49,23 +74,29 @@ def start_scan():
     num_threads = 4
 
     loading_var = tk.BooleanVar()
-    loading_var.set(False)
+    loading_var.set(True)
 
     loading_popup = tk.Toplevel(app)
     loading_popup.title("Scanning")
 
-    loading_label = tk.Label(loading_popup, text="Scanning in progress...")
-    loading_label.pack(padx=20, pady=20)
+    status_label = ttk.Label(loading_popup, text="Starting scan...", foreground="blue")
+    status_label.pack(padx=20, pady=20)
+
+    progress_text = scrolledtext.ScrolledText(loading_popup, width=50, height=8)
+    progress_text.pack(pady=10)
 
     results = queue.Queue()
-    scan_thread = threading.Thread(target=start_threads, args=(target, num_threads, results, loading_var))
+    scan_thread = threading.Thread(target=start_threads, args=(target, num_threads, results, loading_var, status_label, progress_text))
     scan_thread.start()
 
-    app.after(100, check_loading, loading_popup, loading_var)
+    stop_button = tk.Button(loading_popup, text="Stop Scan", command=lambda: loading_var.set(False))
+    stop_button.pack(pady=10)
 
-def check_loading(loading_popup, loading_var):
+    app.after(100, check_loading, loading_popup, loading_var, status_label, results)
+
+def check_loading(loading_popup, loading_var, status_label, results):
     if loading_var.get():
-        app.after(100, check_loading, loading_popup, loading_var)
+        app.after(100, check_loading, loading_popup, loading_var, status_label, results)
     else:
         loading_popup.destroy()
 
@@ -80,10 +111,10 @@ def check_loading(loading_popup, loading_var):
         for port, service_name in open_ports:
             result_text.insert(tk.END, f"Port {port} open - Service: {service_name}\n")
         result_text.config(state=tk.DISABLED)
+        status_label.config(text="Scan Complete", foreground="green")
 
-# GUI setup
 app = tk.Tk()
-app.title("Network Scanner")
+app.title("Network Scanner Tool")
 
 # Target Entry
 target_label = tk.Label(app, text="Enter the target IP or URL:")
