@@ -79,7 +79,7 @@ def start_scan():
     loading_popup = tk.Toplevel(app)
     loading_popup.title("Scanning")
 
-    status_label = ttk.Label(loading_popup, text="Starting scan...", foreground="blue")
+    status_label = ttk.Label(loading_popup, text="Scanning in progress...", foreground="blue")
     status_label.pack(padx=20, pady=20)
 
     progress_text = scrolledtext.ScrolledText(loading_popup, width=50, height=8)
